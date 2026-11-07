@@ -377,7 +377,10 @@ impl NodeWrapper<'_> {
 
         if state.is_read_only_supported() && state.is_read_only_or_disabled() {
             atspi_state.insert(State::ReadOnly);
-        } else {
+        }
+        // enzUI: a disabled node of any role is neither enabled nor sensitive;
+        // a read-only one still is, as GTK reports it.
+        if !state.is_disabled() {
             atspi_state.insert(State::Enabled | State::Sensitive);
         }
 
