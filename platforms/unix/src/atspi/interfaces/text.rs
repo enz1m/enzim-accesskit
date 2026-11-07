@@ -654,6 +654,28 @@ mod virtual_text_dbus_tests {
         (adapter, registration, node)
     }
 
+    /// A connected socket pair in the flavour the *selected* zbus runtime
+    /// accepts. #2683 puts this adapter on tokio wherever the product graph
+    /// also links the XDG portal backend, and a tokio zbus takes
+    /// `tokio::net::UnixStream`; the async-io build keeps std streams. The
+    /// object-server gates below therefore run on whichever runtime the crate
+    /// was built with instead of pinning one of their own.
+    #[cfg(not(feature = "tokio"))]
+    fn socket_pair() -> (UnixStream, UnixStream) {
+        UnixStream::pair().unwrap()
+    }
+
+    #[cfg(feature = "tokio")]
+    fn socket_pair() -> (tokio::net::UnixStream, tokio::net::UnixStream) {
+        let (server, client) = UnixStream::pair().unwrap();
+        server.set_nonblocking(true).unwrap();
+        client.set_nonblocking(true).unwrap();
+        (
+            tokio::net::UnixStream::from_std(server).unwrap(),
+            tokio::net::UnixStream::from_std(client).unwrap(),
+        )
+    }
+
     async fn call<R>(
         connection: &zbus::Connection,
         interface: &str,
@@ -677,7 +699,7 @@ mod virtual_text_dbus_tests {
 
     #[test]
     fn dbus_read_is_cancelled_during_provider_traversal() {
-        futures_lite::future::block_on(async {
+        crate::util::block_on(async {
             let entered = Arc::new(std::sync::Barrier::new(2));
             let concrete = Arc::new(BlockingDocument {
                 entered: Arc::clone(&entered),
@@ -685,7 +707,7 @@ mod virtual_text_dbus_tests {
             let provider: Arc<dyn VirtualTextProvider> = concrete;
             let (_adapter, registration, node) = platform_node(&provider);
             let path = "/org/a11y/atspi/accessible/2677/44";
-            let (server_stream, client_stream) = UnixStream::pair().unwrap();
+            let (server_stream, client_stream) = socket_pair();
             let guid = zbus::Guid::generate();
             let server_builder = Builder::unix_stream(server_stream)
                 .server(guid)
@@ -698,18 +720,22 @@ mod virtual_text_dbus_tests {
                 futures_lite::future::zip(server_builder.build(), client_builder.build()).await;
             let server = server.unwrap();
             let client = client.unwrap();
-            let worker = std::thread::spawn(move || {
-                futures_lite::future::block_on(call::<String>(
-                    &client,
-                    "org.a11y.atspi.Text",
-                    "GetText",
-                    &(0_i32, 1_i32),
-                ))
+            // The provider blocks the thread serving the request, which on a
+            // current-thread runtime is the thread driving this call. Cancel
+            // from a plain OS thread so the consequence is the same on either
+            // runtime: the in-flight read is abandoned and the caller sees
+            // NoReply rather than an empty success.
+            let canceller = std::thread::spawn(move || {
+                entered.wait();
+                registration.cancel_pending_requests();
+                registration
             });
-            entered.wait();
-            registration.cancel_pending_requests();
-            let error = worker.join().unwrap().unwrap_err();
+            let error = call::<String>(&client, "org.a11y.atspi.Text", "GetText", &(0_i32, 1_i32))
+                .await
+                .unwrap_err();
+            let registration = canceller.join().unwrap();
             assert!(error.to_string().contains("NoReply"));
+            drop(registration);
             drop(server);
         });
     }
@@ -756,7 +782,7 @@ mod virtual_text_dbus_tests {
 
     #[test]
     fn object_server_routes_text_editing_and_typed_refusals() {
-        futures_lite::future::block_on(async {
+        crate::util::block_on(async {
             let provider: Arc<dyn VirtualTextProvider> =
                 Arc::new(Document::new("visible offscreen tail"));
             let (_adapter, registration, node) = platform_node(&provider);
@@ -766,7 +792,7 @@ mod virtual_text_dbus_tests {
             assert!(cache_item.ifaces.contains(atspi::Interface::Text));
             assert!(cache_item.ifaces.contains(atspi::Interface::EditableText));
             let path = "/org/a11y/atspi/accessible/2677/44";
-            let (server_stream, client_stream) = UnixStream::pair().unwrap();
+            let (server_stream, client_stream) = socket_pair();
             let guid = zbus::Guid::generate();
             let server_builder = Builder::unix_stream(server_stream)
                 .server(guid)
