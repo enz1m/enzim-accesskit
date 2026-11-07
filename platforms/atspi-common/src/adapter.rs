@@ -1,3 +1,4 @@
+// Modified by enzUI contributors. See FORK.md.
 // Copyright 2022 The AccessKit Authors. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (found in
 // the LICENSE-APACHE file) or the MIT license (found in
@@ -26,6 +27,18 @@ use std::{
         atomic::{AtomicUsize, Ordering},
     },
 };
+
+fn interface_roster(root: Node<'_>) -> Vec<(NodeId, InterfaceSet)> {
+    fn visit(node: Node<'_>, output: &mut Vec<(NodeId, InterfaceSet)>) {
+        output.push((node.id(), NodeWrapper(&node).interfaces()));
+        for child in node.filtered_children(&filter) {
+            visit(child, output);
+        }
+    }
+    let mut output = Vec::new();
+    visit(root, &mut output);
+    output
+}
 
 struct AdapterChangeHandler<'a> {
     adapter: &'a Adapter,
@@ -442,19 +455,7 @@ impl Adapter {
     }
 
     fn register_tree(&self) {
-        fn add_children(node: Node<'_>, to_add: &mut Vec<(NodeId, InterfaceSet)>) {
-            for child in node.filtered_children(&filter) {
-                let child_id = child.id();
-                let wrapper = NodeWrapper(&child);
-                let interfaces = wrapper.interfaces();
-                to_add.push((child_id, interfaces));
-                add_children(child, to_add);
-            }
-        }
-
-        let mut objects_to_add = Vec::new();
-
-        let (adapter_index, root_id) = {
+        let (adapter_index, root_id, objects_to_add) = {
             let tree = self.context.read_tree();
             let tree_state = tree.state();
             let mut app_context = self.context.write_app_context();
@@ -463,10 +464,7 @@ impl Adapter {
             let adapter_index = app_context.adapter_index(self.id).unwrap();
             let root = tree_state.root();
             let root_id = root.id();
-            let wrapper = NodeWrapper(&root);
-            objects_to_add.push((root_id, wrapper.interfaces()));
-            add_children(root, &mut objects_to_add);
-            (adapter_index, root_id)
+            (adapter_index, root_id, interface_roster(root))
         };
 
         for (id, interfaces) in objects_to_add {
@@ -603,11 +601,21 @@ fn root_window(current_state: &TreeState) -> Option<Node<'_>> {
 
 impl Drop for Adapter {
     fn drop(&mut self) {
-        let root_id = self.context.read_tree().state().root_id();
+        let (root_id, objects) = {
+            let tree = self.context.read_tree();
+            (
+                tree.state().root_id(),
+                interface_roster(tree.state().root()),
+            )
+        };
+        // Callbacks can query the adapter, so the tree lock must already be released.
         self.window_destroyed(root_id);
-        // Note: We deliberately do the following here, not in a Drop
-        // implementation on context, because AppContext owns a second
-        // strong reference to Context, and we need that to be released.
+        for (id, interfaces) in objects {
+            self.emit_object_event(id, ObjectEvent::StateChanged(State::Defunct, true));
+            self.emit_cache_removed(id);
+            self.unregister_interfaces(id, interfaces);
+        }
+        // AppContext also owns this context; Context::drop cannot remove that reference.
         self.context.write_app_context().remove_adapter(self.id);
     }
 }
