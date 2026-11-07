@@ -1,3 +1,4 @@
+// Modified by enzUI contributors. See FORK.md.
 // Copyright 2022 The AccessKit Authors. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (found in
 // the LICENSE-APACHE file) or the MIT license (found in
@@ -911,16 +912,38 @@ impl PlatformNode {
         &self,
         f: impl Fn(NodeId) -> T,
     ) -> Result<HashMap<RelationType, Vec<T>>> {
-        self.resolve(|node| {
+        self.resolve_with_context(|node, tree, _| {
             let mut relations = HashMap::new();
             let controls: Vec<_> = node
                 .controls()
                 .filter(|controlled| filter(controlled) == FilterResult::Include)
                 .map(|controlled| controlled.id())
-                .map(f)
+                .map(&f)
                 .collect();
             if !controls.is_empty() {
                 relations.insert(RelationType::ControllerFor, controls);
+            }
+            // enzICED: the label, description and error relations a node
+            // states explicitly, as GTK reports them.
+            let state = tree.state();
+            let Some((_, tree_id)) = state.locate_node(node.id()) else {
+                return Ok(relations);
+            };
+            let mut related = |relation: RelationType, ids: &[accesskit::NodeId]| {
+                let targets: Vec<_> = ids
+                    .iter()
+                    .filter_map(|id| state.node_by_tree_local_id(*id, tree_id))
+                    .filter(|target| filter(target) == FilterResult::Include)
+                    .map(|target| f(target.id()))
+                    .collect();
+                if !targets.is_empty() {
+                    relations.insert(relation, targets);
+                }
+            };
+            related(RelationType::LabelledBy, node.data().labelled_by());
+            related(RelationType::DescribedBy, node.data().described_by());
+            if let Some(error) = node.data().error_message() {
+                related(RelationType::ErrorMessage, &[error]);
             }
             Ok(relations)
         })
