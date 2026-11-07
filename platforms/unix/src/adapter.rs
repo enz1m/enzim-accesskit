@@ -1,9 +1,13 @@
+// Modified by enzUI contributors. See FORK.md.
 // Copyright 2022 The AccessKit Authors. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (found in
 // the LICENSE-APACHE file) or the MIT license (found in
 // the LICENSE-MIT file), at your option.
 
-use accesskit::{ActionHandler, ActivationHandler, DeactivationHandler, Rect, TreeUpdate};
+use accesskit::{
+    ActionHandler, ActivationHandler, DeactivationHandler, NodeId as LocalNodeId, Rect, TreeId,
+    TreeUpdate,
+};
 use accesskit_atspi_common::{
     ActionHandlerNoMut, ActionHandlerWrapper, Adapter as AdapterImpl, AdapterCallback, CacheEvent,
     Event, NodeId, PlatformNode, WindowBounds, next_adapter_id,
@@ -39,10 +43,12 @@ impl Callback {
 impl AdapterCallback for Callback {
     fn register_interfaces(&self, adapter: &AdapterImpl, id: NodeId, interfaces: InterfaceSet) {
         let node = adapter.platform_node(id);
+        let _ = crate::virtual_text::observe_platform_node(node.clone(), interfaces);
         self.send_message(Message::RegisterInterfaces { node, interfaces });
     }
 
     fn unregister_interfaces(&self, adapter: &AdapterImpl, id: NodeId, interfaces: InterfaceSet) {
+        crate::virtual_text::unobserve_platform_interfaces(adapter.id(), id, interfaces);
         self.send_message(Message::UnregisterInterfaces {
             adapter_id: adapter.id(),
             node_id: id,
@@ -57,6 +63,7 @@ impl AdapterCallback for Callback {
                 self.send_message(Message::EmitCacheAdd { node });
             }
             Event::Cache(CacheEvent::Removed(id)) => {
+                crate::virtual_text::forget_platform_node(adapter.id(), id);
                 self.send_message(Message::EmitCacheRemove {
                     adapter_id: adapter.id(),
                     node_id: id,
@@ -198,6 +205,8 @@ impl Adapter {
                 action_handler,
             } => {
                 let initial_state = update_factory();
+                let _scope =
+                    crate::virtual_text::TreeUpdateScope::enter(self.id, initial_state.tree_id);
                 let r#impl = AdapterImpl::with_wrapped_action_handler(
                     self.id,
                     get_or_init_app_context(),
@@ -209,8 +218,33 @@ impl Adapter {
                 );
                 *state = AdapterState::Active(r#impl);
             }
-            AdapterState::Active(r#impl) => r#impl.update(update_factory()),
+            AdapterState::Active(r#impl) => {
+                let update = update_factory();
+                let _scope = crate::virtual_text::TreeUpdateScope::enter(self.id, update.tree_id);
+                r#impl.update(update);
+            }
         }
+    }
+
+    /// Monotonic identity used to scope lazy provider ownership to this exact
+    /// adapter. It is distinct from all local node and tree identifiers.
+    pub fn virtual_text_adapter_identity(&self) -> usize {
+        self.id
+    }
+
+    /// Register a lazy text provider for an exact node in this adapter.
+    ///
+    /// `tree` is the `TreeUpdate::tree_id` that owns `node`. Registration may
+    /// happen before or after that node is first published; the Unix adapter
+    /// binds it to the exact consumer-tree identity during updates.
+    pub fn register_virtual_text_provider(
+        &self,
+        tree: TreeId,
+        node: LocalNodeId,
+        provider: &Arc<dyn crate::virtual_text::VirtualTextProvider>,
+    ) -> Result<crate::virtual_text::VirtualTextRegistration, crate::virtual_text::VirtualTextError>
+    {
+        crate::virtual_text::register_virtual_text_provider(self.id, tree, node, provider)
     }
 
     /// Update the tree state based on whether the window is focused.
@@ -234,8 +268,18 @@ impl Adapter {
 
 impl Drop for Adapter {
     fn drop(&mut self) {
+        crate::virtual_text::forget_adapter(self.id);
         self.send_message(Message::RemoveAdapter { id: self.id });
     }
+}
+
+pub(crate) fn refresh_virtual_text_interfaces(refresh: crate::virtual_text::InterfaceRefresh) {
+    let messages = get_or_init_messages();
+    let message = Message::RefreshVirtualTextInterfaces { refresh };
+    #[cfg(not(feature = "tokio"))]
+    let _ = messages.try_send(message);
+    #[cfg(feature = "tokio")]
+    let _ = messages.send(message);
 }
 
 pub(crate) enum Message {
@@ -267,5 +311,8 @@ pub(crate) enum Message {
     EmitCacheRemove {
         adapter_id: usize,
         node_id: NodeId,
+    },
+    RefreshVirtualTextInterfaces {
+        refresh: crate::virtual_text::InterfaceRefresh,
     },
 }

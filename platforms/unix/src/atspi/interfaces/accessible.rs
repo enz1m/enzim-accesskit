@@ -1,3 +1,4 @@
+// Modified by enzUI contributors. See FORK.md.
 // Copyright 2022 The AccessKit Authors. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (found in
 // the LICENSE-APACHE file) or the MIT license (found in
@@ -139,7 +140,12 @@ impl NodeAccessibleInterface {
     }
 
     fn get_interfaces(&self) -> fdo::Result<InterfaceSet> {
-        self.node.interfaces().map_err(self.map_error())
+        let mut interfaces = self.node.interfaces().map_err(self.map_error())?;
+        if crate::virtual_text::has_provider_for_platform_node(&self.node) {
+            interfaces.insert(atspi::Interface::Text);
+            interfaces.insert(atspi::Interface::EditableText);
+        }
+        Ok(interfaces)
     }
 }
 

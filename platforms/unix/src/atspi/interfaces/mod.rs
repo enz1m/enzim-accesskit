@@ -1,3 +1,4 @@
+// Modified by enzUI contributors. See FORK.md.
 // Copyright 2022 The AccessKit Authors. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (found in
 // the LICENSE-APACHE file) or the MIT license (found in
@@ -8,6 +9,7 @@ mod action;
 mod application;
 mod cache;
 mod component;
+mod editable_text;
 mod hyperlink;
 mod selection;
 mod text;
@@ -35,6 +37,7 @@ pub(crate) use action::*;
 pub(crate) use application::*;
 pub(crate) use cache::*;
 pub(crate) use component::*;
+pub(crate) use editable_text::*;
 pub(crate) use hyperlink::*;
 pub(crate) use selection::*;
 pub(crate) use text::*;

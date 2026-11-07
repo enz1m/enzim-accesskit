@@ -1,3 +1,4 @@
+// Modified by enzUI contributors. See FORK.md.
 // Copyright 2023 The AccessKit Authors. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (found in
 // the LICENSE-APACHE file) or the MIT license (found in
@@ -90,6 +91,8 @@ fn activate_adapter(entry: &mut AdapterEntry) {
     {
         *state = match entry.activation_handler.request_initial_tree() {
             Some(initial_state) => {
+                let _scope =
+                    crate::virtual_text::TreeUpdateScope::enter(entry.id, initial_state.tree_id);
                 let r#impl = AdapterImpl::with_wrapped_action_handler(
                     entry.id,
                     get_or_init_app_context(),
@@ -290,6 +293,11 @@ async fn process_adapter_message(
         } => {
             if let Some(bus) = atspi_bus {
                 bus.emit_cache_remove(adapter_id, node_id).await?;
+            }
+        }
+        Message::RefreshVirtualTextInterfaces { refresh } => {
+            if let Some(bus) = atspi_bus {
+                bus.refresh_virtual_text_interfaces(refresh).await?;
             }
         }
     }

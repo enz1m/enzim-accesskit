@@ -1,3 +1,4 @@
+// Modified by enzUI contributors. See FORK.md.
 // Copyright 2022 The AccessKit Authors. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (found in
 // the LICENSE-APACHE file) or the MIT license (found in
@@ -155,9 +156,16 @@ impl Bus {
             )
             .await?;
         }
-        if new_interfaces.contains(Interface::Text) {
+        if new_interfaces.contains(Interface::Text)
+            || (new_interfaces.contains(Interface::Accessible)
+                && crate::virtual_text::has_provider_for_platform_node(&node))
+        {
             self.register_interface(&path, TextInterface::new(node.clone()))
                 .await?;
+            if crate::virtual_text::has_provider_for_platform_node(&node) {
+                self.register_interface(&path, EditableTextInterface::new(node.clone()))
+                    .await?;
+            }
         }
         if new_interfaces.contains(Interface::Value) {
             self.register_interface(&path, ValueInterface::new(node.clone()))
@@ -176,6 +184,26 @@ impl Bus {
             false,
             |result| result,
         )
+    }
+
+    pub(crate) async fn refresh_virtual_text_interfaces(
+        &self,
+        refresh: crate::virtual_text::InterfaceRefresh,
+    ) -> Result<()> {
+        let path = ObjectId::from(&refresh.node).path();
+        if refresh.enabled {
+            self.register_interface(&path, TextInterface::new(refresh.node.clone()))
+                .await?;
+            self.register_interface(&path, EditableTextInterface::new(refresh.node))
+                .await?;
+        } else {
+            self.unregister_interface::<EditableTextInterface>(&path)
+                .await?;
+            if !refresh.native_text {
+                self.unregister_interface::<TextInterface>(&path).await?;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) async fn unregister_interfaces(
@@ -208,8 +236,16 @@ impl Bus {
             self.unregister_interface::<SelectionInterface>(&path)
                 .await?;
         }
-        if old_interfaces.contains(Interface::Text) {
+        let removing_node = old_interfaces.contains(Interface::Accessible);
+        if (old_interfaces.contains(Interface::Text)
+            && !crate::virtual_text::has_provider_for_consumer_identity(adapter_id, node_id))
+            || removing_node
+        {
             self.unregister_interface::<TextInterface>(&path).await?;
+        }
+        if removing_node {
+            self.unregister_interface::<EditableTextInterface>(&path)
+                .await?;
         }
         if old_interfaces.contains(Interface::Value) {
             self.unregister_interface::<ValueInterface>(&path).await?;

@@ -1,3 +1,4 @@
+// Modified by enzUI contributors. See FORK.md.
 // Copyright 2026 The AccessKit Authors. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (found in
 // the LICENSE-APACHE file) or the MIT license (found in
@@ -25,7 +26,11 @@ pub(crate) fn cache_item_for_node(
     Ok(cache_item(bus_name, node.cache_node()?))
 }
 
-fn cache_item(bus_name: &UniqueName, node: CacheNode) -> CacheItem {
+fn cache_item(bus_name: &UniqueName, mut node: CacheNode) -> CacheItem {
+    if crate::virtual_text::has_provider_for_consumer_identity(node.adapter_id, node.id) {
+        node.interfaces.insert(atspi::Interface::Text);
+        node.interfaces.insert(atspi::Interface::EditableText);
+    }
     let parent = match node.parent {
         NodeIdOrRoot::Root => ObjectId::Root,
         NodeIdOrRoot::Node(node_id) => ObjectId::Node {
