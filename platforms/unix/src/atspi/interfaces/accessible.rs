@@ -149,6 +149,15 @@ impl NodeAccessibleInterface {
     }
 }
 
+fn application_accessible_id() -> &'static str {
+    // AT-SPI's synthetic Application object has no AccessKit Node, so it
+    // cannot inherit an `author_id` like descendants do. Its process id is
+    // already the stable identity used to find this application on the bus;
+    // a type prefix keeps it disjoint from every Frame/target author id.
+    static ID: OnceLock<String> = OnceLock::new();
+    ID.get_or_init(|| format!("accesskit:application:{}", std::process::id()))
+}
+
 pub(crate) struct RootAccessibleInterface {
     bus_name: OwnedUniqueName,
     root: PlatformRoot,
@@ -203,7 +212,7 @@ impl RootAccessibleInterface {
 
     #[zbus(property)]
     fn accessible_id(&self) -> &str {
-        ""
+        application_accessible_id()
     }
 
     fn get_child_at_index(&self, index: i32) -> fdo::Result<(OwnedObjectAddress,)> {
@@ -248,5 +257,39 @@ impl RootAccessibleInterface {
 
     fn get_interfaces(&self) -> InterfaceSet {
         self.root.interfaces()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RootAccessibleInterface;
+    use accesskit_atspi_common::{AppContext, PlatformRoot};
+    use std::sync::{Arc, OnceLock};
+    use zbus::names::OwnedUniqueName;
+
+    #[test]
+    fn application_interface_publishes_a_stable_non_sentinel_accessible_id() {
+        let context = AppContext::new(Some("identity-test".to_owned()));
+        let root = PlatformRoot::new(&context);
+        let interface = RootAccessibleInterface::new(
+            OwnedUniqueName::try_from(":1.2711").expect("valid test bus name"),
+            root,
+            Arc::new(OnceLock::new()),
+        );
+
+        let first = interface.accessible_id();
+        let second = interface.accessible_id();
+        assert_eq!(
+            first, second,
+            "ordinary tree rebuilds must not change Application identity"
+        );
+        assert_eq!(
+            first,
+            format!("accesskit:application:{}", std::process::id())
+        );
+        assert!(
+            !first.is_empty() && first != "0" && first != "root",
+            "sentinel id: {first:?}"
+        );
     }
 }
