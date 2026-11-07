@@ -448,21 +448,15 @@ impl Bus {
 
     async fn emit_cache_signal<B>(&self, signal_name: &str, body: &B) -> Result<()>
     where
-        B: serde::Serialize + zbus::zvariant::DynamicType,
+        B: serde::Serialize + zbus::zvariant::Type,
     {
-        map_or_ignoring_recoverable_error(
-            self.conn
-                .emit_signal(
-                    Option::<BusName>::None,
-                    cache_path(),
-                    InterfaceName::from_str_unchecked("org.a11y.atspi.Cache"),
-                    MemberName::from_str_unchecked(signal_name),
-                    body,
-                )
-                .await,
-            (),
-            |_| (),
-        )
+        let message = match cache_signal_message(signal_name, body) {
+            Ok(message) => message,
+            Err(error) => {
+                return map_or_ignoring_recoverable_error::<(), _, _>(Err(error), (), |()| ())
+            }
+        };
+        map_or_ignoring_recoverable_error(self.conn.send(&message).await, (), |_| ())
     }
 
     async fn emit_event(
@@ -508,4 +502,22 @@ where
         Err(error) if zbus_error_is_unrecoverable(&error) => Err(error),
         Err(_) => Ok(default),
     }
+}
+
+/// An `org.a11y.atspi.Cache` signal carrying `body` as its one argument.
+///
+/// zbus spreads a struct body over the message's arguments, so the item is
+/// wrapped in a one-element tuple: libatspi reads `AddAccessible` as
+/// `((so)(so)(so)iiassusau)` and `RemoveAccessible` as `(so)`, and drops
+/// updates with any other signature (enzICED).
+pub(crate) fn cache_signal_message<B>(signal_name: &str, body: &B) -> Result<zbus::Message>
+where
+    B: serde::Serialize + zbus::zvariant::Type,
+{
+    zbus::Message::signal(
+        cache_path(),
+        InterfaceName::from_str_unchecked("org.a11y.atspi.Cache"),
+        MemberName::from_str_unchecked(signal_name),
+    )?
+    .build(&(body,))
 }

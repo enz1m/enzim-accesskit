@@ -262,6 +262,34 @@ mod tests {
         assert_eq!(window.children, 1);
     }
 
+    /// Whether the message's header carries `signature` as its body
+    /// signature field: a length byte, the text and a nul, as on the wire.
+    /// The parsed `Signature` cannot tell one struct argument from its
+    /// fields spread over several arguments; the wire text can.
+    fn has_wire_signature(message: &zbus::Message, signature: &str) -> bool {
+        let mut field = vec![u8::try_from(signature.len()).unwrap()];
+        field.extend_from_slice(signature.as_bytes());
+        field.push(0);
+        message
+            .data()
+            .windows(field.len())
+            .any(|window| window == field.as_slice())
+    }
+
+    #[test]
+    fn cache_signals_carry_one_struct_argument() {
+        let (_adapter, iface) = cache(window_with_button());
+        let item = iface.items().unwrap().pop().unwrap();
+        let added = crate::atspi::bus::cache_signal_message("AddAccessible", &item).unwrap();
+        assert!(has_wire_signature(&added, "((so)(so)(so)iiassusau)"));
+        let added: (atspi::CacheItem,) = added.body().deserialize().unwrap();
+        assert_eq!(added.0.object, item.object);
+
+        let removed =
+            crate::atspi::bus::cache_signal_message("RemoveAccessible", &item.object).unwrap();
+        assert!(has_wire_signature(&removed, "(so)"));
+    }
+
     #[test]
     fn object_ref_encodes_bus_name_and_node_path() {
         let (_adapter, root) = root_for(window_with_button());
