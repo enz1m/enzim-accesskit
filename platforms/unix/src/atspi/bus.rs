@@ -167,6 +167,13 @@ impl Bus {
                     .await?;
             }
         }
+        // enzUI: an editable text input without a lazy provider edits natively.
+        if new_interfaces.contains(Interface::EditableText)
+            && !crate::virtual_text::has_provider_for_platform_node(&node)
+        {
+            self.register_interface(&path, EditableTextInterface::new(node.clone()))
+                .await?;
+        }
         if new_interfaces.contains(Interface::Value) {
             self.register_interface(&path, ValueInterface::new(node.clone()))
                 .await?;
@@ -243,7 +250,10 @@ impl Bus {
         {
             self.unregister_interface::<TextInterface>(&path).await?;
         }
-        if removing_node {
+        if removing_node
+            || (old_interfaces.contains(Interface::EditableText)
+                && !crate::virtual_text::has_provider_for_consumer_identity(adapter_id, node_id))
+        {
             self.unregister_interface::<EditableTextInterface>(&path)
                 .await?;
         }
