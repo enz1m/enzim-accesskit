@@ -81,6 +81,27 @@ struct AdapterEntry {
     state: Arc<Mutex<AdapterState>>,
 }
 
+// Sorted by adapter id: the domain of `RemoveAdapter`'s binary search and the
+// order every adapter is activated in when accessibility turns on.
+fn insert_adapter_entry(adapters: &mut Vec<AdapterEntry>, entry: AdapterEntry) -> usize {
+    let id = entry.id;
+    match adapters.binary_search_by(|candidate| candidate.id.cmp(&id)) {
+        // Ids are taken when a window is created and this message is sent from
+        // that thread, so a higher id can arrive first; appending would leave
+        // the entry unfindable and the adapter would outlive its window.
+        Err(index) => {
+            adapters.insert(index, entry);
+            index
+        }
+        // One live adapter per id, so an id seen again belongs to a window
+        // whose adapter is already gone.
+        Ok(index) => {
+            adapters[index] = entry;
+            index
+        }
+    }
+}
+
 fn activate_adapter(entry: &mut AdapterEntry) {
     let mut state = entry.state.lock().unwrap();
     if let AdapterState::Inactive {
@@ -225,15 +246,17 @@ async fn process_adapter_message(
             deactivation_handler,
             state,
         } => {
-            adapters.push(AdapterEntry {
-                id,
-                activation_handler,
-                deactivation_handler,
-                state,
-            });
+            let index = insert_adapter_entry(
+                adapters,
+                AdapterEntry {
+                    id,
+                    activation_handler,
+                    deactivation_handler,
+                    state,
+                },
+            );
             if atspi_bus.is_some() {
-                let entry = adapters.last_mut().unwrap();
-                activate_adapter(entry);
+                activate_adapter(&mut adapters[index]);
             }
         }
         Message::RemoveAdapter { id } => {
@@ -303,4 +326,102 @@ async fn process_adapter_message(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod adapter_entry_registry {
+    use super::{AdapterEntry, AdapterState, Bus, Message, block_on, process_adapter_message};
+    use accesskit::{
+        ActionHandler, ActionRequest, ActivationHandler, DeactivationHandler, TreeUpdate,
+    };
+    use accesskit_atspi_common::{ActionHandlerWrapper, WindowBounds};
+    use std::sync::{Arc, Mutex};
+
+    struct NeverActivates;
+
+    impl ActivationHandler for NeverActivates {
+        fn request_initial_tree(&mut self) -> Option<TreeUpdate> {
+            None
+        }
+    }
+
+    struct NoOpDeactivation;
+
+    impl DeactivationHandler for NoOpDeactivation {
+        fn deactivate_accessibility(&mut self) {}
+    }
+
+    struct NoOpActionHandler;
+
+    impl ActionHandler for NoOpActionHandler {
+        fn do_action(&mut self, _: ActionRequest) {}
+    }
+
+    fn add_adapter(id: usize) -> Message {
+        Message::AddAdapter {
+            id,
+            activation_handler: Box::new(NeverActivates),
+            deactivation_handler: Box::new(NoOpDeactivation),
+            state: Arc::new(Mutex::new(AdapterState::Inactive {
+                is_window_focused: false,
+                root_window_bounds: WindowBounds::default(),
+                action_handler: Arc::new(ActionHandlerWrapper::new(NoOpActionHandler)),
+            })),
+        }
+    }
+
+    // With no bus the message loop only maintains its own registry, so these
+    // deliveries reach neither D-Bus nor an activation handler.
+    fn deliver(adapters: &mut Vec<AdapterEntry>, message: Message) {
+        let no_bus: Option<Bus> = None;
+        block_on(process_adapter_message(&no_bus, adapters, message))
+            .expect("registry maintenance performs no fallible D-Bus work");
+    }
+
+    fn ids(adapters: &[AdapterEntry]) -> Vec<usize> {
+        adapters.iter().map(|entry| entry.id).collect()
+    }
+
+    #[test]
+    fn adapters_added_out_of_id_order_stay_removable() {
+        let mut adapters = Vec::new();
+        deliver(&mut adapters, add_adapter(2));
+        deliver(&mut adapters, add_adapter(0));
+        deliver(&mut adapters, add_adapter(1));
+        assert_eq!(ids(&adapters), vec![0, 1, 2]);
+
+        deliver(&mut adapters, Message::RemoveAdapter { id: 2 });
+        assert_eq!(ids(&adapters), vec![0, 1]);
+        deliver(&mut adapters, Message::RemoveAdapter { id: 0 });
+        assert_eq!(ids(&adapters), vec![1]);
+        deliver(&mut adapters, Message::RemoveAdapter { id: 1 });
+        assert!(ids(&adapters).is_empty());
+    }
+
+    #[test]
+    fn adapters_added_in_id_order_stay_removable() {
+        let mut adapters = Vec::new();
+        deliver(&mut adapters, add_adapter(0));
+        deliver(&mut adapters, add_adapter(1));
+        deliver(&mut adapters, add_adapter(2));
+        assert_eq!(ids(&adapters), vec![0, 1, 2]);
+
+        deliver(&mut adapters, Message::RemoveAdapter { id: 1 });
+        assert_eq!(ids(&adapters), vec![0, 2]);
+        deliver(&mut adapters, Message::RemoveAdapter { id: 0 });
+        assert_eq!(ids(&adapters), vec![2]);
+        deliver(&mut adapters, Message::RemoveAdapter { id: 2 });
+        assert!(ids(&adapters).is_empty());
+    }
+
+    #[test]
+    fn a_reused_id_leaves_one_entry() {
+        let mut adapters = Vec::new();
+        deliver(&mut adapters, add_adapter(5));
+        deliver(&mut adapters, add_adapter(5));
+        assert_eq!(ids(&adapters), vec![5]);
+
+        deliver(&mut adapters, Message::RemoveAdapter { id: 5 });
+        assert!(ids(&adapters).is_empty());
+    }
 }
