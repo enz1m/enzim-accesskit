@@ -324,6 +324,10 @@ impl NodeWrapper<'_> {
         if state.is_required() {
             atspi_state.insert(State::Required);
         }
+        // enzICED: a node working on something reports it.
+        if state.is_busy() {
+            atspi_state.insert(State::Busy);
+        }
         if state.is_multiselectable() {
             atspi_state.insert(State::Multiselectable);
         }
