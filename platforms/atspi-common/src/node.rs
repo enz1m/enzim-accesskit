@@ -459,6 +459,16 @@ impl NodeWrapper<'_> {
         self.current_value().is_some()
     }
 
+    // enzUI: an editable text input whose value the application sets from a
+    // string (`Action::SetValue` with `ActionData::Value`) is AT-SPI
+    // EditableText; read-only and disabled inputs are not.
+    fn supports_editable_text(&self) -> bool {
+        self.0.is_text_input()
+            && !self.0.is_read_only()
+            && !self.0.is_disabled()
+            && self.0.supports_action(Action::SetValue, &filter)
+    }
+
     pub(crate) fn interfaces(&self) -> InterfaceSet {
         let mut interfaces = InterfaceSet::new(Interface::Accessible);
         if self.supports_action() {
@@ -478,6 +488,9 @@ impl NodeWrapper<'_> {
         }
         if self.supports_value() {
             interfaces.insert(Interface::Value);
+        }
+        if self.supports_editable_text() {
+            interfaces.insert(Interface::EditableText);
         }
         interfaces
     }
@@ -1679,6 +1692,27 @@ impl PlatformNode {
         self.resolve(|node| {
             let wrapper = NodeWrapper(&node);
             Ok(wrapper.current_value().unwrap_or(0.0))
+        })
+    }
+
+    /// enzUI: the text of an editable text input, for EditableText edits that
+    /// splice it.
+    pub fn text_contents(&self) -> Result<String> {
+        self.resolve(|node| Ok(node.value().unwrap_or_default()))
+    }
+
+    /// enzUI: replaces an editable text input's whole text through the
+    /// application's `SetValue` handling, which applies its own admission.
+    pub fn set_text_contents(&self, text: &str) -> Result<()> {
+        let editable = self.resolve(|node| Ok(NodeWrapper(&node).supports_editable_text()))?;
+        if !editable {
+            return Err(Error::UnsupportedInterface);
+        }
+        self.do_action_internal(self.id, |_, _, target_node, target_tree| ActionRequest {
+            action: Action::SetValue,
+            target_tree,
+            target_node,
+            data: Some(ActionData::Value(text.into())),
         })
     }
 
