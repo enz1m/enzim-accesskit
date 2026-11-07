@@ -453,7 +453,7 @@ impl Bus {
         let message = match cache_signal_message(signal_name, body) {
             Ok(message) => message,
             Err(error) => {
-                return map_or_ignoring_recoverable_error::<(), _, _>(Err(error), (), |()| ())
+                return map_or_ignoring_recoverable_error::<(), _, _>(Err(error), (), |()| ());
             }
         };
         map_or_ignoring_recoverable_error(self.conn.send(&message).await, (), |_| ())
