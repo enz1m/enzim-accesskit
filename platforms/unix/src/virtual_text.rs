@@ -61,15 +61,115 @@ impl Cancellation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VirtualTextError {
     WrongDocument,
-    StaleRevision { requested: u64, current: u64 },
+    StaleRevision {
+        requested: u64,
+        current: u64,
+    },
     Cancelled,
     Range,
-    ByteBudget { requested: usize, limit: usize },
-    CharacterBudget { requested: usize, limit: usize },
-    RunBudget { requested: usize, limit: usize },
-    ReplacementBudget { requested: usize, limit: usize },
+    ByteBudget {
+        requested: usize,
+        limit: usize,
+    },
+    CharacterBudget {
+        requested: usize,
+        limit: usize,
+    },
+    RunBudget {
+        requested: usize,
+        limit: usize,
+    },
+    ReplacementBudget {
+        requested: usize,
+        limit: usize,
+    },
     ReadOnly,
+    /// The application reducer did not answer before the request deadline.
+    ///
+    /// Distinct from `Unavailable`: the provider exists and accepted the
+    /// request, but the application never answered it. An AT that collapses
+    /// this into a generic failure cannot tell "no such document" from
+    /// "the application is wedged" (enzUI-ICED #2677).
+    Timeout,
+    /// The provider's bounded mutation queue is full; retry after the
+    /// application drains it.
+    MailboxFull,
+    /// The provider's mutation queue is closed because the document is
+    /// shutting down. Retrying cannot succeed.
+    MailboxClosed,
+    /// The application reducer refused this mutation (document invariant such
+    /// as a maximum paragraph length), rather than failing to run.
+    ReducerRefused,
     Unavailable,
+}
+
+/// The AT-SPI/D-Bus error class one refusal is reported as.
+///
+/// A **typed** class rather than a string: `map_virtual` matches this
+/// exhaustively with no fall-through arm, so adding a refusal (or renaming a
+/// class) is a compile error in this crate instead of a silent collapse into
+/// `Failed` that no test can see (enzUI-ICED #2677).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AtspiErrorClass {
+    /// Malformed request (`org.freedesktop.DBus.Error.InvalidArgs`).
+    InvalidArgs,
+    /// Bounded budget or queue capacity exceeded.
+    LimitsExceeded,
+    /// Request abandoned before an answer existed.
+    NoReply,
+    /// Refused by policy or by the application's own document invariant.
+    AccessDenied,
+    /// Accepted, but the application never answered in time.
+    TimedOut,
+    /// The document/queue is shutting down; retrying cannot succeed.
+    Disconnected,
+    /// Anything else that went wrong.
+    Failed,
+}
+
+impl AtspiErrorClass {
+    /// Member name of the `org.freedesktop.DBus.Error.*` this class becomes.
+    ///
+    /// Exhaustive by construction; the prefix is added by zbus.
+    pub fn dbus_name(self) -> &'static str {
+        match self {
+            Self::InvalidArgs => "InvalidArgs",
+            Self::LimitsExceeded => "LimitsExceeded",
+            Self::NoReply => "NoReply",
+            Self::AccessDenied => "AccessDenied",
+            Self::TimedOut => "TimedOut",
+            Self::Disconnected => "Disconnected",
+            Self::Failed => "Failed",
+        }
+    }
+}
+
+impl VirtualTextError {
+    /// Stable AT-SPI/D-Bus error class for this refusal.
+    ///
+    /// Single source of truth for the boundary mapping so the four
+    /// application-lifecycle refusals cannot silently collapse into one class:
+    /// `map_virtual` builds its `fdo::Error` from this by an exhaustive typed
+    /// match, and the framework can assert the classification without a live
+    /// bus.
+    pub fn atspi_class(&self) -> AtspiErrorClass {
+        match self {
+            Self::Range => AtspiErrorClass::InvalidArgs,
+            Self::ByteBudget { .. }
+            | Self::CharacterBudget { .. }
+            | Self::RunBudget { .. }
+            | Self::ReplacementBudget { .. } => AtspiErrorClass::LimitsExceeded,
+            Self::Cancelled => AtspiErrorClass::NoReply,
+            Self::ReadOnly => AtspiErrorClass::AccessDenied,
+            Self::Timeout => AtspiErrorClass::TimedOut,
+            Self::MailboxFull => AtspiErrorClass::LimitsExceeded,
+            Self::MailboxClosed => AtspiErrorClass::Disconnected,
+            Self::ReducerRefused => AtspiErrorClass::AccessDenied,
+            Self::WrongDocument | Self::StaleRevision { .. } | Self::Unavailable => {
+                AtspiErrorClass::Failed
+            }
+        }
+    }
 }
 
 impl fmt::Display for VirtualTextError {

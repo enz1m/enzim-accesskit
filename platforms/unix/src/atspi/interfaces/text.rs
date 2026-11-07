@@ -9,7 +9,7 @@ use atspi::{CoordType, Granularity, ScrollType};
 use std::collections::HashMap;
 use zbus::{fdo, interface};
 
-use crate::virtual_text::{VirtualTextError, VirtualTextUnixConsumer};
+use crate::virtual_text::{AtspiErrorClass, VirtualTextError, VirtualTextUnixConsumer};
 
 pub(crate) struct TextInterface {
     node: PlatformNode,
@@ -32,19 +32,20 @@ impl TextInterface {
         // Preserve refusal classes at the D-Bus boundary. In particular, a
         // bounded/stale request is never an empty string that an AT could
         // mistake for document content.
-        match error {
-            VirtualTextError::Range => fdo::Error::InvalidArgs(error.to_string()),
-            VirtualTextError::ByteBudget { .. }
-            | VirtualTextError::CharacterBudget { .. }
-            | VirtualTextError::RunBudget { .. }
-            | VirtualTextError::ReplacementBudget { .. } => {
-                fdo::Error::LimitsExceeded(error.to_string())
-            }
-            VirtualTextError::Cancelled => fdo::Error::NoReply(error.to_string()),
-            VirtualTextError::ReadOnly => fdo::Error::AccessDenied(error.to_string()),
-            VirtualTextError::WrongDocument
-            | VirtualTextError::StaleRevision { .. }
-            | VirtualTextError::Unavailable => fdo::Error::Failed(error.to_string()),
+        // One classification lives in `VirtualTextError::atspi_class`, so the
+        // D-Bus class and anything the framework asserts cannot drift apart.
+        // The match is over the typed `AtspiErrorClass` and has NO catch-all:
+        // a new class or a renamed one is a compile error here, never a silent
+        // collapse into `Failed` (enzUI-ICED #2677).
+        let message = error.to_string();
+        match error.atspi_class() {
+            AtspiErrorClass::InvalidArgs => fdo::Error::InvalidArgs(message),
+            AtspiErrorClass::LimitsExceeded => fdo::Error::LimitsExceeded(message),
+            AtspiErrorClass::NoReply => fdo::Error::NoReply(message),
+            AtspiErrorClass::AccessDenied => fdo::Error::AccessDenied(message),
+            AtspiErrorClass::TimedOut => fdo::Error::TimedOut(message),
+            AtspiErrorClass::Disconnected => fdo::Error::Disconnected(message),
+            AtspiErrorClass::Failed => fdo::Error::Failed(message),
         }
     }
 }
@@ -697,6 +698,13 @@ mod virtual_text_dbus_tests {
         reply.body().deserialize()
     }
 
+    fn assert_remote_error_name(error: zbus::Error, expected: &str) {
+        match error {
+            zbus::Error::MethodError(name, _, _) => assert_eq!(name.as_str(), expected),
+            other => panic!("expected remote D-Bus error {expected}, got {other:?}"),
+        }
+    }
+
     #[test]
     fn dbus_read_is_cancelled_during_provider_traversal() {
         crate::util::block_on(async {
@@ -875,7 +883,7 @@ mod virtual_text_dbus_tests {
                 let oversized = call::<String>(&client, "org.a11y.atspi.Text", "GetText", &offsets)
                     .await
                     .unwrap_err();
-                assert!(oversized.to_string().contains("LimitsExceeded"));
+                assert_remote_error_name(oversized, "org.freedesktop.DBus.Error.LimitsExceeded");
             }
             let stale = call::<String>(&client, "org.a11y.atspi.Text", "GetText", &(3_i32, 4_i32))
                 .await
@@ -899,7 +907,7 @@ mod virtual_text_dbus_tests {
             )
             .await
             .unwrap_err();
-            assert!(oversized_edit.to_string().contains("LimitsExceeded"));
+            assert_remote_error_name(oversized_edit, "org.freedesktop.DBus.Error.LimitsExceeded");
             let read_only = call::<bool>(
                 &client,
                 "org.a11y.atspi.EditableText",
@@ -931,5 +939,209 @@ mod virtual_text_dbus_tests {
             assert!(!cache_item.ifaces.contains(atspi::Interface::EditableText));
             drop(server);
         });
+    }
+
+    /// #2677: every refusal the lazy provider protocol can produce must reach
+    /// D-Bus as its own class, and the four application-lifecycle refusals must
+    /// stay apart from each other and from the pre-existing classes.
+    ///
+    /// `map_virtual` is the only boundary an AT ever observes, so this asserts
+    /// the produced `fdo::Error` **value**, not a re-implementation of the
+    /// mapping. `witness` below is an exhaustive match with no catch-all: a new
+    /// `VirtualTextError` variant that nobody adds to `cases` is a compile
+    /// error here, so this table cannot fail open the way a hand list does.
+    ///
+    /// Sabotage (each independently): in `VirtualTextError::atspi_class`, send
+    /// `Cancelled`/`Timeout`/`MailboxClosed`/`ReducerRefused`/`MailboxFull` to
+    /// `AtspiErrorClass::Failed` — that row's class and produced `fdo::Error`
+    /// both red; map `StaleRevision` to any different class or remove its case
+    /// and the exhaustive population/row assertion reds; or change one arm of
+    /// `AtspiErrorClass::dbus_name` — the D-Bus member assertion reds.
+    #[test]
+    fn every_refusal_class_reaches_dbus_under_its_own_name() {
+        use crate::virtual_text::AtspiErrorClass;
+        use std::collections::BTreeSet;
+
+        // Exhaustive, catch-all free: the compiler refuses to build this test
+        // if a refusal is added and left out of `cases`.
+        fn witness(error: &VirtualTextError) -> u8 {
+            match error {
+                VirtualTextError::WrongDocument => 0,
+                VirtualTextError::StaleRevision { .. } => 1,
+                VirtualTextError::Cancelled => 2,
+                VirtualTextError::Range => 3,
+                VirtualTextError::ByteBudget { .. } => 4,
+                VirtualTextError::CharacterBudget { .. } => 5,
+                VirtualTextError::RunBudget { .. } => 6,
+                VirtualTextError::ReplacementBudget { .. } => 7,
+                VirtualTextError::ReadOnly => 8,
+                VirtualTextError::Timeout => 9,
+                VirtualTextError::MailboxFull => 10,
+                VirtualTextError::MailboxClosed => 11,
+                VirtualTextError::ReducerRefused => 12,
+                VirtualTextError::Unavailable => 13,
+            }
+        }
+
+        let cases: Vec<(VirtualTextError, AtspiErrorClass, &str)> = vec![
+            (
+                VirtualTextError::WrongDocument,
+                AtspiErrorClass::Failed,
+                "Failed",
+            ),
+            (
+                VirtualTextError::StaleRevision {
+                    requested: 3,
+                    current: 4,
+                },
+                AtspiErrorClass::Failed,
+                "Failed",
+            ),
+            (
+                VirtualTextError::Cancelled,
+                AtspiErrorClass::NoReply,
+                "NoReply",
+            ),
+            (
+                VirtualTextError::Range,
+                AtspiErrorClass::InvalidArgs,
+                "InvalidArgs",
+            ),
+            (
+                VirtualTextError::ByteBudget {
+                    requested: 9,
+                    limit: 8,
+                },
+                AtspiErrorClass::LimitsExceeded,
+                "LimitsExceeded",
+            ),
+            (
+                VirtualTextError::CharacterBudget {
+                    requested: 9,
+                    limit: 8,
+                },
+                AtspiErrorClass::LimitsExceeded,
+                "LimitsExceeded",
+            ),
+            (
+                VirtualTextError::RunBudget {
+                    requested: 9,
+                    limit: 8,
+                },
+                AtspiErrorClass::LimitsExceeded,
+                "LimitsExceeded",
+            ),
+            (
+                VirtualTextError::ReplacementBudget {
+                    requested: 9,
+                    limit: 8,
+                },
+                AtspiErrorClass::LimitsExceeded,
+                "LimitsExceeded",
+            ),
+            (
+                VirtualTextError::ReadOnly,
+                AtspiErrorClass::AccessDenied,
+                "AccessDenied",
+            ),
+            (
+                VirtualTextError::Timeout,
+                AtspiErrorClass::TimedOut,
+                "TimedOut",
+            ),
+            (
+                VirtualTextError::MailboxFull,
+                AtspiErrorClass::LimitsExceeded,
+                "LimitsExceeded",
+            ),
+            (
+                VirtualTextError::MailboxClosed,
+                AtspiErrorClass::Disconnected,
+                "Disconnected",
+            ),
+            (
+                VirtualTextError::ReducerRefused,
+                AtspiErrorClass::AccessDenied,
+                "AccessDenied",
+            ),
+            (
+                VirtualTextError::Unavailable,
+                AtspiErrorClass::Failed,
+                "Failed",
+            ),
+        ];
+
+        // Population floor derived from the exhaustive witness above.
+        let covered: BTreeSet<u8> = cases.iter().map(|(error, _, _)| witness(error)).collect();
+        assert_eq!(
+            covered.len(),
+            14,
+            "every refusal variant must appear exactly once: covered {covered:?}",
+        );
+
+        for (error, class, member) in &cases {
+            assert_eq!(
+                error.atspi_class(),
+                *class,
+                "{error:?} must classify as {class:?}",
+            );
+            assert_eq!(
+                class.dbus_name(),
+                *member,
+                "{class:?} must keep its D-Bus member name",
+            );
+            let message = error.to_string();
+            let expected = match class {
+                AtspiErrorClass::InvalidArgs => fdo::Error::InvalidArgs(message),
+                AtspiErrorClass::LimitsExceeded => fdo::Error::LimitsExceeded(message),
+                AtspiErrorClass::NoReply => fdo::Error::NoReply(message),
+                AtspiErrorClass::AccessDenied => fdo::Error::AccessDenied(message),
+                AtspiErrorClass::TimedOut => fdo::Error::TimedOut(message),
+                AtspiErrorClass::Disconnected => fdo::Error::Disconnected(message),
+                AtspiErrorClass::Failed => fdo::Error::Failed(message),
+            };
+            assert_eq!(
+                TextInterface::map_virtual(error.clone()),
+                expected,
+                "{error:?} must reach D-Bus as {member}",
+            );
+            // The message names the exact variant, so an AT can still tell a
+            // full queue from a byte budget inside one shared class.
+            assert!(
+                format!("{:?}", TextInterface::map_virtual(error.clone())).contains(
+                    format!("{error:?}")
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or_default()
+                ),
+                "{error:?} must remain identifiable in its D-Bus message",
+            );
+        }
+
+        // The four application-lifecycle refusals: pairwise distinct classes,
+        // which is the whole point of adding them.
+        let lifecycle: Vec<AtspiErrorClass> = [
+            VirtualTextError::Timeout,
+            VirtualTextError::MailboxFull,
+            VirtualTextError::MailboxClosed,
+            VirtualTextError::ReducerRefused,
+        ]
+        .iter()
+        .map(VirtualTextError::atspi_class)
+        .collect();
+        assert_eq!(
+            lifecycle,
+            vec![
+                AtspiErrorClass::TimedOut,
+                AtspiErrorClass::LimitsExceeded,
+                AtspiErrorClass::Disconnected,
+                AtspiErrorClass::AccessDenied,
+            ],
+        );
+        assert_eq!(
+            lifecycle.iter().collect::<BTreeSet<_>>().len(),
+            4,
+            "no two application-lifecycle refusals may collapse into one class",
+        );
     }
 }
