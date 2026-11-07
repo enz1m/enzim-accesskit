@@ -1,3 +1,4 @@
+// Modified by enzUI contributors. See FORK.md.
 // Copyright 2022 The AccessKit Authors. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (found in
 // the LICENSE-APACHE file).
@@ -50,6 +51,18 @@ compile_error!(
 );
 
 use accesskit::{ActionHandler, ActionRequest, ActivationHandler, DeactivationHandler, TreeUpdate};
+
+#[cfg(all(
+    feature = "accesskit_unix",
+    any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    )
+))]
+pub use accesskit_unix::virtual_text;
 use winit::{
     event::WindowEvent as WinitWindowEvent,
     event_loop::{ActiveEventLoop, EventLoopProxy},
@@ -263,5 +276,47 @@ impl Adapter {
     /// a full tree.
     pub fn update_if_active(&mut self, updater: impl FnOnce() -> TreeUpdate) {
         self.inner.update_if_active(updater);
+    }
+
+    /// Monotonic identity of this exact Unix platform adapter.
+    ///
+    /// This is exposed for a window owner that must rebind RAII registrations
+    /// if the platform adapter is recreated; it is not a node identifier.
+    #[doc(hidden)]
+    #[cfg(all(
+        feature = "accesskit_unix",
+        any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        )
+    ))]
+    pub fn virtual_text_adapter_identity(&self) -> usize {
+        self.inner.virtual_text_adapter_identity()
+    }
+
+    /// Register a lazy virtual-text provider for a node in this window's exact
+    /// Unix adapter/tree. The token owns registration and cancels active
+    /// requests before unregistering on drop.
+    #[cfg(all(
+        feature = "accesskit_unix",
+        any(
+            target_os = "linux",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        )
+    ))]
+    pub fn register_virtual_text_provider(
+        &self,
+        tree: accesskit::TreeId,
+        node: accesskit::NodeId,
+        provider: &std::sync::Arc<dyn virtual_text::VirtualTextProvider>,
+    ) -> Result<virtual_text::VirtualTextRegistration, virtual_text::VirtualTextError> {
+        self.inner
+            .register_virtual_text_provider(tree, node, provider)
     }
 }

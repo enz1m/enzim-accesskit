@@ -1,3 +1,4 @@
+// Modified by enzUI contributors. See FORK.md.
 // Copyright 2022 The AccessKit Authors. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (found in
 // the LICENSE-APACHE file).
@@ -28,6 +29,23 @@ impl Adapter {
 
     pub fn update_if_active(&mut self, updater: impl FnOnce() -> TreeUpdate) {
         self.adapter.update_if_active(updater);
+    }
+
+    pub fn virtual_text_adapter_identity(&self) -> usize {
+        self.adapter.virtual_text_adapter_identity()
+    }
+
+    pub fn register_virtual_text_provider(
+        &self,
+        tree: accesskit::TreeId,
+        node: accesskit::NodeId,
+        provider: &std::sync::Arc<dyn accesskit_unix::virtual_text::VirtualTextProvider>,
+    ) -> Result<
+        accesskit_unix::virtual_text::VirtualTextRegistration,
+        accesskit_unix::virtual_text::VirtualTextError,
+    > {
+        self.adapter
+            .register_virtual_text_provider(tree, node, provider)
     }
 
     fn update_window_focus_state(&mut self, is_focused: bool) {
