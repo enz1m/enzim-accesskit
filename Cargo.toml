@@ -22,7 +22,8 @@ authors = ["The AccessKit contributors"]
 categories = ["gui"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/AccessKit/accesskit"
+repository = "https://github.com/enz1m/enzim-accesskit"
+homepage = "https://github.com/enz1m/enzim-accesskit"
 rust-version = "1.85"
 
 [workspace.dependencies]

@@ -1,4 +1,5 @@
 [package]
+homepage.workspace = true
 name = "accesskit_unix"
 version = "0.22.1"
 authors.workspace = true

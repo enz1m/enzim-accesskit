@@ -1,4 +1,5 @@
 [package]
+homepage.workspace = true
 name = "accesskit_winit"
 version = "0.33.2"
 authors.workspace = true
