@@ -1,20 +1,21 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
-    "common",
-    "consumer",
-    "platforms/android",
-    "platforms/atspi-common",
-    "platforms/ios",
-    "platforms/macos",
-    "platforms/unix",
-    "platforms/windows",
-    "platforms/winit",
+    "accesskit",
+    "accesskit_consumer",
+    "adapters/android",
+    "adapters/atspi-common",
+    "adapters/ios",
+    "adapters/macos",
+    "adapters/unix",
+    "adapters/windows",
+    "adapters/winit",
+    "example_common",
 ]
 default-members = [
-    "common",
-    "consumer",
-    "platforms/winit",
+    "accesskit",
+    "accesskit_consumer",
+    "adapters/winit",
 ]
 
 [workspace.package]
@@ -24,10 +25,10 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/enz1m/enzim-accesskit"
 homepage = "https://github.com/enz1m/enzim-accesskit"
-rust-version = "1.85"
+rust-version = "1.87"
 
 [workspace.dependencies]
-hashbrown = { version = "0.16", default-features = false, features = ["default-hasher"] }
+hashbrown = { version = "0.17", default-features = false, features = ["default-hasher"] }
 
 [profile.release]
 lto = true
@@ -35,10 +36,10 @@ opt-level = "z"
 codegen-units = 1
 
 [patch.crates-io]
-zbus = { git = "https://github.com/enz1m/enzim-zbus.git", rev = "815a9ca7b64aa24e14ccb6ea3f7eda97ef7bbc8a" }
-winit = { git = "https://github.com/enz1m/enzim-winit.git", rev = "f6ce16941bf815a438db7e628ab1126ce48e31dd" }
-zbus_macros = { git = "https://github.com/enz1m/enzim-zbus.git", rev = "815a9ca7b64aa24e14ccb6ea3f7eda97ef7bbc8a" }
-zbus_names = { git = "https://github.com/enz1m/enzim-zbus.git", rev = "815a9ca7b64aa24e14ccb6ea3f7eda97ef7bbc8a" }
-zvariant = { git = "https://github.com/enz1m/enzim-zbus.git", rev = "815a9ca7b64aa24e14ccb6ea3f7eda97ef7bbc8a" }
-zvariant_derive = { git = "https://github.com/enz1m/enzim-zbus.git", rev = "815a9ca7b64aa24e14ccb6ea3f7eda97ef7bbc8a" }
-zvariant_utils = { git = "https://github.com/enz1m/enzim-zbus.git", rev = "815a9ca7b64aa24e14ccb6ea3f7eda97ef7bbc8a" }
+zbus = { git = "https://github.com/enz1m/enzim-zbus.git", rev = "e182645b56d15e637bb6c8144f99ebfa7f900716" }
+winit = { git = "https://github.com/enz1m/enzim-winit.git", rev = "40eeb41f8637ef1620afa377ba006874224b6d65" }
+zbus_macros = { git = "https://github.com/enz1m/enzim-zbus.git", rev = "e182645b56d15e637bb6c8144f99ebfa7f900716" }
+zbus_names = { git = "https://github.com/enz1m/enzim-zbus.git", rev = "e182645b56d15e637bb6c8144f99ebfa7f900716" }
+zvariant = { git = "https://github.com/enz1m/enzim-zbus.git", rev = "e182645b56d15e637bb6c8144f99ebfa7f900716" }
+zvariant_derive = { git = "https://github.com/enz1m/enzim-zbus.git", rev = "e182645b56d15e637bb6c8144f99ebfa7f900716" }
+zvariant_utils = { git = "https://github.com/enz1m/enzim-zbus.git", rev = "e182645b56d15e637bb6c8144f99ebfa7f900716" }

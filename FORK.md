@@ -1,7 +1,9 @@
 # Fork provenance
 
 - Upstream: https://github.com/AccessKit/accesskit
-- Base: `c88605b96d04431f9c3c792464a0f2f253480e94`
+- Base: `c88605b96d04431f9c3c792464a0f2f253480e94`, with upstream `main`
+  merged in (accesskit 0.25, accesskit_winit 0.34, accesskit_unix 0.24).
+  Upstream history is merged, never rebased.
 - Branch: `enzim`; crate names and upstream ancestry are unchanged.
 - License: Per-package upstream licenses. Upstream license files and notices are retained.
 - Fork author and signer: Bernard, [enz1m](https://github.com/enz1m).
@@ -19,11 +21,12 @@
 - unix: Expose stable AT-SPI window identity
 - unix: Preserve virtual text refusal classes
 - unix: Keep adapter message entries sorted
-- unix: Encode cache signals as one struct argument
+- unix: Cache signal encoding uses upstream's one-argument implementation
 - unix: Format virtual text handlers
 - unix: Support native editable text operations
 - winit: Route adapter-scoped virtual text providers
-- build: Pin the prepared zbus family and winit; update the standalone lockfile
+- build: Pin the prepared zbus family (now its 5.x merge) and winit; update the
+  standalone lockfile
 
 The three source archives record the same upstream commit. `accesskit_winit`
 remains Apache-2.0; the common and Unix packages retain MIT OR Apache-2.0.
